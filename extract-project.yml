@@ -1,0 +1,55 @@
+name: Extract Lua Sombria project
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  extract-project:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract project ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl -L --fail --retry 3 -o /tmp/lua_sombria.zip \
+            https://raw.githubusercontent.com/andre992011man-rgb/Operacao-Lua-Sombria/main/Lua_Sombria_10.zip
+
+          mkdir -p /tmp/lua_sombria
+          unzip -q /tmp/lua_sombria.zip -d /tmp/lua_sombria
+
+          cp -a /tmp/lua_sombria/. .
+
+          rm -f Lua_Sombria_10.zip
+          rm -f 'Operacao_Lua_Sombria_GitHub_Ready_v2.1(1).zip'
+
+          test -f project.godot
+          test -f codemagic.yaml
+          test -f export_presets.cfg
+
+      - name: Commit extracted project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: extract Lua Sombria 10 project"
+          git push
