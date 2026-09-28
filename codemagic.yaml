@@ -1,0 +1,224 @@
+# Operação Lua Sombria — Codemagic CI/CD
+# Godot 4.7.2 / Android ARM64 / OpenGL Compatibility
+# Gera APK e AAB. O workflow assinado fica separado e só deve ser usado
+# depois que um keystore for cadastrado no Codemagic.
+
+workflows:
+  android-release:
+    name: Operação Lua Sombria — Android APK + AAB
+    max_build_duration: 120
+    instance_type: linux_x2
+
+    environment:
+      ubuntu: 24.04
+      java: 17
+      vars:
+        GODOT_VERSION: "4.7.2-stable"
+        PACKAGE_NAME: "com.operacaoluasombria.yaba2074"
+
+    triggering:
+      events:
+        - push
+        - manual
+      branch_patterns:
+        - pattern: "*"
+          include: true
+          source: true
+      cancel_previous_builds: true
+
+    scripts:
+      - name: "01 — Conferir ambiente"
+        script: |
+          set -euo pipefail
+          echo "=== OPERACAO LUA SOMBRIA ==="
+          echo "Branch: ${CM_BRANCH:-unknown}"
+          echo "Build: ${BUILD_NUMBER:-unknown}"
+          java -version
+          python3 --version
+          test -f project.godot
+          test -f export_presets.cfg
+          test -f tools/ci/build_release_github.sh
+
+      - name: "02 — Instalar Godot 4.7.2 oficial"
+        script: |
+          set -euo pipefail
+          GODOT_TAG="4.7.2-stable"
+          GODOT_DIR="$HOME/godot"
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.7.2.stable"
+
+          rm -rf "$GODOT_DIR"
+          mkdir -p "$GODOT_DIR" "$TEMPLATE_DIR"
+
+          curl -fL --retry 5 --retry-all-errors \
+            -o /tmp/godot.zip \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_TAG}/Godot_v4.7.2-stable_linux.x86_64.zip"
+
+          unzip -q /tmp/godot.zip -d "$GODOT_DIR"
+          mv "$GODOT_DIR/Godot_v4.7.2-stable_linux.x86_64" "$GODOT_DIR/godot"
+          chmod +x "$GODOT_DIR/godot"
+
+          curl -fL --retry 5 --retry-all-errors \
+            -o /tmp/templates.tpz \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_TAG}/Godot_v4.7.2-stable_export_templates.tpz"
+
+          unzip -q /tmp/templates.tpz -d "$TEMPLATE_DIR"
+
+          export PATH="$GODOT_DIR:$PATH"
+          "$GODOT_DIR/godot" --version
+
+      - name: "03 — Preparar Android SDK"
+        script: |
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -n "$SDK"
+          test -d "$SDK"
+
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+          "$SDK/build-tools/35.0.0/aapt2" version
+          "$SDK/build-tools/35.0.0/apksigner" --version
+          "$SDK/build-tools/35.0.0/zipalign" -h >/dev/null
+
+      - name: "04 — QA estática"
+        script: |
+          set -euo pipefail
+          python3 tests/test_project.py
+
+      - name: "05 — Validar projeto Godot"
+        script: |
+          set -euo pipefail
+          export PATH="$HOME/godot:$PATH"
+          "$HOME/godot/godot" --headless --path "$CM_BUILD_DIR" --editor --quit-after 3
+
+      - name: "06 — Exportar APK + AAB"
+        script: |
+          set -euo pipefail
+          export PATH="$HOME/godot:$PATH"
+          chmod +x tools/ci/build_release_github.sh
+          tools/ci/build_release_github.sh
+
+      - name: "07 — Verificar artefatos"
+        script: |
+          set -euo pipefail
+          test -s build/ci/OperacaoLuaSombria2074-unsigned.apk
+          test -s build/ci/OperacaoLuaSombria2074.aab
+
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          "$SDK/build-tools/35.0.0/aapt2" dump badging \
+            build/ci/OperacaoLuaSombria2074-unsigned.apk | head -40
+
+          sha256sum \
+            build/ci/OperacaoLuaSombria2074-unsigned.apk \
+            build/ci/OperacaoLuaSombria2074.aab \
+            > build/ci/SHA256SUMS.txt
+
+          ls -lh build/ci/
+
+    artifacts:
+      - build/ci/*.apk
+      - build/ci/*.aab
+      - build/ci/SHA256SUMS.txt
+      - /tmp/*.log
+
+  android-signed-release:
+    name: Operação Lua Sombria — Android Assinado
+    max_build_duration: 120
+    instance_type: linux_x2
+
+    environment:
+      ubuntu: 24.04
+      java: 17
+      android_signing:
+        - lua_sombria_release
+      vars:
+        GODOT_VERSION: "4.7.2-stable"
+        PACKAGE_NAME: "com.operacaoluasombria.yaba2074"
+
+    scripts:
+      - name: "01 — Preparar ferramentas"
+        script: |
+          set -euo pipefail
+          mkdir -p "$HOME/godot" \
+            "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+
+          curl -fL --retry 5 --retry-all-errors \
+            -o /tmp/godot.zip \
+            "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"
+
+          unzip -q /tmp/godot.zip -d "$HOME/godot"
+          mv "$HOME/godot/Godot_v4.7.2-stable_linux.x86_64" "$HOME/godot/godot"
+          chmod +x "$HOME/godot/godot"
+
+          curl -fL --retry 5 --retry-all-errors \
+            -o /tmp/templates.tpz \
+            "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"
+
+          unzip -q /tmp/templates.tpz \
+            -d "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+
+      - name: "02 — Android SDK"
+        script: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: "03 — QA"
+        script: |
+          set -euo pipefail
+          python3 tests/test_project.py
+          "$HOME/godot/godot" --headless --path "$CM_BUILD_DIR" --editor --quit-after 3
+
+      - name: "04 — Exportar e assinar APK + AAB"
+        script: |
+          set -euo pipefail
+          mkdir -p build/ci/signed
+          "$HOME/godot/godot" --headless --path "$CM_BUILD_DIR" \
+            --export-release "Android A16 2074" \
+            "build/ci/unsigned.apk"
+
+          "$HOME/godot/godot" --headless --path "$CM_BUILD_DIR" \
+            --export-release "Android A16 Release AAB" \
+            "build/ci/unsigned.aab"
+
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          ZIPALIGN="$SDK/build-tools/35.0.0/zipalign"
+          APKSIGNER="$SDK/build-tools/35.0.0/apksigner"
+
+          "$ZIPALIGN" -f -p 4 \
+            build/ci/unsigned.apk \
+            build/ci/signed/aligned.apk
+
+          "$APKSIGNER" sign \
+            --ks "$CM_KEYSTORE_PATH" \
+            --ks-key-alias "$CM_KEY_ALIAS" \
+            --ks-pass env:CM_KEYSTORE_PASSWORD \
+            --key-pass env:CM_KEY_PASSWORD \
+            --out build/ci/signed/OperacaoLuaSombria2074.apk \
+            build/ci/signed/aligned.apk
+
+          "$APKSIGNER" verify --verbose \
+            build/ci/signed/OperacaoLuaSombria2074.apk
+
+          jarsigner \
+            -keystore "$CM_KEYSTORE_PATH" \
+            -storepass "$CM_KEYSTORE_PASSWORD" \
+            -keypass "$CM_KEY_PASSWORD" \
+            -signedjar build/ci/signed/OperacaoLuaSombria2074.aab \
+            build/ci/unsigned.aab \
+            "$CM_KEY_ALIAS"
+
+          sha256sum \
+            build/ci/signed/OperacaoLuaSombria2074.apk \
+            build/ci/signed/OperacaoLuaSombria2074.aab \
+            > build/ci/signed/SHA256SUMS.txt
+
+          rm -f build/ci/unsigned.apk build/ci/unsigned.aab build/ci/signed/aligned.apk
+
+    artifacts:
+      - build/ci/signed/*.apk
+      - build/ci/signed/*.aab
+      - build/ci/signed/SHA256SUMS.txt
